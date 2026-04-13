@@ -46,7 +46,6 @@ jobs:
           pip install -r backend/requirements.txt
 
       - name: Flake8 backend
-        # ❌ Убрано continue-on-error: true
         run: flake8 backend/
 
       - name: Django tests
