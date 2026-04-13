@@ -13,9 +13,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: always
 
   backend:
-    build: ./backend          # ← СВОЙ Dockerfile (PostgreSQL)
+    image: pshche/kittygram_backend:latest
     container_name: backend
     env_file:
       - .env
@@ -29,27 +30,26 @@ services:
       sh -c "
         python manage.py migrate &&
         python manage.py collectstatic --noinput &&
-        gunicorn --bind 0.0.0.0:8000 kittygram_backend.wsgi
+        gunicorn --bind 0.0.0.0:8000 kittygram_backend.wsgi:application
       "
+    restart: always
 
   frontend:
-    image: leeevs/kittygram_frontend  # ← Оставляем готовый React
+    image: pshche/kittygram_frontend:latest
     container_name: frontend
+    volumes:
+      - static:/static
     command: >
       sh -c "
         set -e
-        cp /app/build/index.html /static/index.html
-        cp -r /app/build/static/. /static/
-        if [ -f /app/build/asset-manifest.json ]; then cp /app/build/asset-manifest.json /static/; fi
-        if [ -f /app/build/favicon.ico ]; then cp /app/build/favicon.ico /static/; fi
-        if [ -f /app/build/manifest.json ]; then cp /app/build/manifest.json /static/; fi
-        if [ -f /app/build/robots.txt ]; then cp /app/build/robots.txt /static/; fi
+        cp -r /app/build/* /static/ || true
+        cp /app/build/index.html /static/index.html || true
+        tail -f /dev/null
       "
-    volumes:
-      - static:/static
+    restart: always
 
   gateway:
-    build: ./nginx            # ← СВОЙ nginx с вашим default.conf
+    image: pshche/kittygram_gateway:latest
     container_name: gateway
     depends_on:
       - backend
@@ -59,8 +59,10 @@ services:
     volumes:
       - static:/static
       - media:/media
+    restart: always
 
 volumes:
   pg_data:
   static:
   media:
+  
