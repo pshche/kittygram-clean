@@ -1,0 +1,175 @@
+name: Kittygram CI/CD
+
+on:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: kittygram-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:13.10
+        env:
+          POSTGRES_DB: kittygram
+          POSTGRES_USER: kittygram_user
+          POSTGRES_PASSWORD: kittygram_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 -r backend/requirements.txt
+
+      - name: PEP8 check backend (Flake8)
+        continue-on-error: true
+        run: flake8 backend/
+
+      - name: Django check
+        env:
+          SECRET_KEY: test-secret-key
+          DEBUG: "False"
+          POSTGRES_DB: kittygram
+          POSTGRES_USER: kittygram_user
+          POSTGRES_PASSWORD: kittygram_password
+          DB_HOST: localhost
+          DB_PORT: 5432
+        run: |
+          cd backend
+          python manage.py check --deploy
+
+      - name: Backend tests (pytest)
+        working-directory: .
+        env:
+          SECRET_KEY: test-secret-key
+          DEBUG: "True"
+          POSTGRES_DB: kittygram
+          POSTGRES_USER: kittygram_user
+          POSTGRES_PASSWORD: kittygram_password
+          DB_HOST: localhost
+          DB_PORT: 5432
+        run: |
+          pytest tests/ -v
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: CI=true npm test -- --watchAll=false --passWithNoTests
+
+  build_and_push:
+    name: Push Docker images to Docker Hub
+    needs: tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/kittygram_backend:latest
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/kittygram_frontend:latest
+
+      - name: Build and push gateway
+        uses: docker/build-push-action@v7
+        with:
+          context: ./nginx
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/kittygram_gateway:latest
+
+  deploy:
+    name: Deploy to server
+    needs: build_and_push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy docker-compose.production.yml and .env to server
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no docker-compose.production.yml .env ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/kittygram/
+
+      - name: Deploy with docker compose
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.HOST }} << 'EOF'
+            cd /home/${{ secrets.USER }}/kittygram
+            sudo docker compose -f docker-compose.production.yml pull
+            sudo docker compose -f docker-compose.production.yml up -d --force-recreate
+            sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py migrate
+            sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py collectstatic --noinput
+          EOF
+
+  telegram_notify:
+    name: Telegram notification
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram message
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"✅ Kittygram: deploy completed successfully! https://github.com/pshche/kittygram-clean/actions\"}"
