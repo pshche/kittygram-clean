@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:13
@@ -8,14 +6,14 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: always
 
   backend:
-    image: pshche/kittygram_backend:latest  # ← Тесты ожидают ЭТО
+    image: ${DOCKER_USERNAME}/kittygram_backend:latest
     container_name: backend
     env_file: .env
     depends_on:
@@ -33,7 +31,7 @@ services:
     restart: always
 
   frontend:
-    image: pshche/kittygram_frontend:latest
+    image: ${DOCKER_USERNAME}/kittygram_frontend:latest
     container_name: frontend
     volumes:
       - static:/static
@@ -45,7 +43,7 @@ services:
     restart: always
 
   gateway:
-    image: pshche/kittygram_gateway:latest
+    image: ${DOCKER_USERNAME}/kittygram_gateway:latest
     container_name: gateway
     depends_on:
       - backend

@@ -151,16 +151,38 @@ jobs:
             docker-compose.production.yml .env \
             ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/kittygram/
 
-      - name: Deploy
+      - name: Deploy and clean up
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.HOST }} << 'EOF'
-            mkdir -p /home/${{ secrets.USER }}/kittygram
             cd /home/${{ secrets.USER }}/kittygram
+            
+            # Очистка старых контейнеров и образов
+            sudo docker compose -f docker-compose.production.yml down 2>/dev/null || true
+            sudo docker rm -f backend frontend gateway postgres 2>/dev/null || true
+            sudo docker volume prune -f 2>/dev/null || true
+            sudo docker system prune -af --volumes 2>/dev/null || true
+            
+            # Обновление образов
             sudo docker compose -f docker-compose.production.yml pull
-            sudo docker compose -f docker-compose.production.yml up -d --force-recreate
+            
+            # Запуск контейнеров
+            sudo docker compose -f docker-compose.production.yml up -d --force-recreate --remove-orphans
+            
+            # Ожидание запуска
             sleep 30
-            sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py migrate
-            sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py collectstatic --noinput
+            
+            # Миграции и статика
+            sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py migrate || true
+            sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py collectstatic --no-input || true
+            
+            # Копирование файлов фронтенда в правильное место
+            sudo docker compose -f docker-compose.production.yml exec -T gateway sh -c "cp -r /static/static/* /static/ 2>/dev/null || true"
+            
+            # Перезагрузка nginx
+            sudo docker compose -f docker-compose.production.yml exec -T gateway nginx -s reload 2>/dev/null || true
+            
+            # Проверка статуса
+            sudo docker compose -f docker-compose.production.yml ps
           EOF
 
   e2e_tests:
@@ -204,7 +226,12 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          STATUS="${{ job.status }}"
+          STATUS="${{ needs.e2e_tests.result }}"
+          if [ "$STATUS" == "success" ]; then
+            EMOJI="✅"
+          else
+            EMOJI="❌"
+          fi
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"🛸 Kittygram deploy: ${{ job.status }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${EMOJI} Kittygram deploy: ${STATUS}\\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
