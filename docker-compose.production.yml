@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     image: postgres:13
@@ -6,20 +8,32 @@ services:
       - .env
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
-    image: leeevs/kittygram_backend
+    build: ./backend          # ← СВОЙ Dockerfile (PostgreSQL)
     container_name: backend
     env_file:
       - .env
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
       - static:/app/collected_static
       - media:/app/media
+    command: >
+      sh -c "
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        gunicorn --bind 0.0.0.0:8000 kittygram_backend.wsgi
+      "
 
   frontend:
-    image: leeevs/kittygram_frontend
+    image: leeevs/kittygram_frontend  # ← Оставляем готовый React
     container_name: frontend
     command: >
       sh -c "
@@ -35,10 +49,11 @@ services:
       - static:/static
 
   gateway:
-    image: leeevs/kittygram_gateway
+    build: ./nginx            # ← СВОЙ nginx с вашим default.conf
     container_name: gateway
     depends_on:
       - backend
+      - frontend
     ports:
       - "9000:80"
     volumes:

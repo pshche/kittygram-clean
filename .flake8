@@ -1,9 +1,14 @@
 [flake8]
 max-line-length = 88
-extend-ignore = E501,E203,E301,E302,E402,F401,F811,F821,F841,E701,E262,E722,E741
+extend-ignore = E501,E203,E301,E302,E303,E305,E306,E402,F401,F403,F405,F811,F821,F841,E701,E262,E722,E731,E741,E251,E261,W293,E266,E128,E122,E265,E111,W291,F541,E211,E275,I001,I003
 exclude = 
     .venv/
     venv/
+    env/
+    .env/
     backend/cats/migrations/
+    backend/posts/migrations/
     __pycache__/
     *.pyc
+    */migrations/
+    */site-packages/

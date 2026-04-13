@@ -1,12 +1,24 @@
 FROM python:3.9-slim
-# Устанавливаем рабочую директорию
+
+# PostgreSQL зависимости
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
 WORKDIR /app
 
-RUN pip install --upgrade pip
-# Копируем зависимости и устанавливаем их
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-# Копируем остальные файлы приложения
+# Обновляем pip
+RUN pip install --no-cache-dir --upgrade pip setuptools
+
+# Копируем только requirements (кеширование слоёв!)
+COPY requirements/ ./requirements/
+RUN pip install --no-cache-dir -r requirements/base.txt \
+    && pip install --no-cache-dir -r requirements/dev.txt
+
+# Копируем код
 COPY . .
-# Команда для запуска приложения
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "kittygram_backend.wsgi"]
+
+# Миграции + статика + gunicorn
+CMD ["sh", "-c", "python manage.py migrate && python manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8000 kittygram_backend.wsgi"]
