@@ -15,7 +15,7 @@ services:
     restart: always
 
   backend:
-    image: pshche/kittygram-clean_backend:latest  # ← +clean
+    image: pshche/kittygram_backend:latest  # ← Тесты ожидают ЭТО
     container_name: backend
     env_file: .env
     depends_on:
@@ -33,7 +33,7 @@ services:
     restart: always
 
   frontend:
-    image: pshche/kittygram-clean_frontend:latest  # ← +clean
+    image: pshche/kittygram_frontend:latest
     container_name: frontend
     volumes:
       - static:/static
@@ -45,7 +45,7 @@ services:
     restart: always
 
   gateway:
-    image: pshche/kittygram-clean_gateway:latest  # ← +clean
+    image: pshche/kittygram_gateway:latest
     container_name: gateway
     depends_on:
       - backend
@@ -61,4 +61,3 @@ volumes:
   pg_data:
   static:
   media:
-  
