@@ -4,8 +4,7 @@ services:
   postgres:
     image: postgres:13
     container_name: postgres
-    env_file:
-      - .env
+    env_file: .env
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,10 +15,9 @@ services:
     restart: always
 
   backend:
-    image: pshche/kittygram_backend:latest
+    image: pshche/kittygram-clean_backend:latest  # ← +clean
     container_name: backend
-    env_file:
-      - .env
+    env_file: .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,21 +33,19 @@ services:
     restart: always
 
   frontend:
-    image: pshche/kittygram_frontend:latest
+    image: pshche/kittygram-clean_frontend:latest  # ← +clean
     container_name: frontend
     volumes:
       - static:/static
     command: >
       sh -c "
-        set -e
-        cp -r /app/build/* /static/ || true
-        cp /app/build/index.html /static/index.html || true
+        cp -r /app/build/* /static/ 2>/dev/null || true
         tail -f /dev/null
       "
     restart: always
 
   gateway:
-    image: pshche/kittygram_gateway:latest
+    image: pshche/kittygram-clean_gateway:latest  # ← +clean
     container_name: gateway
     depends_on:
       - backend
