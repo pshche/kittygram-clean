@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    env_file:
+      - .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  backend:
+    image: leeevs/kittygram_backend
+    container_name: backend
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+    volumes:
+      - static:/app/collected_static
+      - media:/app/media
+
+  frontend:
+    image: leeevs/kittygram_frontend
+    container_name: frontend
+    command: >
+      sh -c "
+        set -e
+        cp /app/build/index.html /static/index.html
+        cp -r /app/build/static/. /static/
+        if [ -f /app/build/asset-manifest.json ]; then cp /app/build/asset-manifest.json /static/; fi
+        if [ -f /app/build/favicon.ico ]; then cp /app/build/favicon.ico /static/; fi
+        if [ -f /app/build/manifest.json ]; then cp /app/build/manifest.json /static/; fi
+        if [ -f /app/build/robots.txt ]; then cp /app/build/robots.txt /static/; fi
+      "
+    volumes:
+      - static:/static
+
+  gateway:
+    image: leeevs/kittygram_gateway
+    container_name: gateway
+    depends_on:
+      - backend
+    ports:
+      - "9000:80"
+    volumes:
+      - static:/static
+      - media:/media
+
+volumes:
+  pg_data:
+  static:
+  media:
