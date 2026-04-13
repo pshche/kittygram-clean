@@ -1,7 +1,0 @@
-SECRET_KEY=replace_me
-DEBUG=False
-POSTGRES_DB=kittygram
-POSTGRES_USER=kittygram_user
-POSTGRES_PASSWORD=replace_me
-DB_HOST=postgres
-DB_PORT=5432
