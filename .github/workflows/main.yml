@@ -3,23 +3,11 @@ name: Kittygram CI/CD
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Возможность ручного запуска
+  workflow_dispatch:
 
 concurrency:
   group: kittygram-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-  HOST: ${{ secrets.HOST }}
-  USER: ${{ secrets.USER }}
-  SSH_KEY: ${{ secrets.SSH_KEY }}
-  KITTYGRAM_DOMAIN: ${{ secrets.KITTYGRAM_DOMAIN }}
-  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
 jobs:
   tests:
@@ -29,9 +17,9 @@ jobs:
       postgres:
         image: postgres:13.10
         env:
-          POSTGRES_DB: kittygram
-          POSTGRES_USER: kittygram_user
-          POSTGRES_PASSWORD: kittygram_password
+          POSTGRES_DB: ${{ secrets.TEST_POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.TEST_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_POSTGRES_PASSWORD }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -60,11 +48,11 @@ jobs:
 
       - name: Django system check
         env:
-          SECRET_KEY: test-secret-key-not-for-production
+          SECRET_KEY: ${{ secrets.TEST_SECRET_KEY }}
           DEBUG: "False"
-          POSTGRES_DB: kittygram
-          POSTGRES_USER: kittygram_user
-          POSTGRES_PASSWORD: kittygram_password
+          POSTGRES_DB: ${{ secrets.TEST_POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.TEST_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_POSTGRES_PASSWORD }}
           DB_HOST: localhost
           DB_PORT: 5432
         run: |
@@ -73,11 +61,11 @@ jobs:
 
       - name: Run backend tests
         env:
-          SECRET_KEY: test-secret-key-not-for-production
+          SECRET_KEY: ${{ secrets.TEST_SECRET_KEY }}
           DEBUG: "True"
-          POSTGRES_DB: kittygram
-          POSTGRES_USER: kittygram_user
-          POSTGRES_PASSWORD: kittygram_password
+          POSTGRES_DB: ${{ secrets.TEST_POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.TEST_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_POSTGRES_PASSWORD }}
           DB_HOST: localhost
           DB_PORT: 5432
         run: |
@@ -102,7 +90,7 @@ jobs:
     name: Build and push Docker images
     needs: tests
     runs-on: ubuntu-latest
-    if: success()  # Только если тесты прошли успешно
+    if: success()
 
     steps:
       - name: Checkout code
@@ -114,7 +102,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Set up QEMU for multi-platform builds
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
@@ -175,10 +163,10 @@ jobs:
         run: |
           ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts
 
-      - name: Copy docker-compose and env files
+      - name: Copy docker-compose to server
         run: |
           scp -o StrictHostKeyChecking=no \
-            docker-compose.production.yml .env.example \
+            docker-compose.production.yml \
             ${{ secrets.USER }}@${{ secrets.HOST }}:/home/${{ secrets.USER }}/kittygram/
 
       - name: Deploy application
@@ -186,48 +174,34 @@ jobs:
           ssh -o StrictHostKeyChecking=no ${{ secrets.USER }}@${{ secrets.HOST }} << 'EOF'
             cd /home/${{ secrets.USER }}/kittygram
             
-            # Создаем .env из .env.example если нет
-            if [ ! -f .env ]; then
-              cp .env.example .env
-            fi
-            
-            # Остановка старых контейнеров
             echo "🛑 Stopping old containers..."
             sudo docker compose -f docker-compose.production.yml down 2>/dev/null || true
             
-            # Очистка неиспользуемых ресурсов
             echo "🧹 Cleaning up..."
-            sudo docker system prune -af --volumes 2>/dev/null || true
+            sudo docker system prune -af 2>/dev/null || true
             
-            # Скачивание новых образов
             echo "📦 Pulling new images..."
             sudo docker compose -f docker-compose.production.yml pull
             
-            # Запуск контейнеров
             echo "🚀 Starting containers..."
             sudo docker compose -f docker-compose.production.yml up -d --force-recreate
             
-            # Ожидание готовности БД
             echo "⏳ Waiting for database..."
             sleep 15
             
-            # Миграции и статика
             echo "🔄 Running migrations..."
             sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py migrate || true
             
             echo "📁 Collecting static files..."
             sudo docker compose -f docker-compose.production.yml exec -T backend python manage.py collectstatic --no-input || true
             
-            # Копирование статики фронтенда
             echo "🎨 Copying frontend static files..."
             sudo docker compose -f docker-compose.production.yml exec -T frontend sh -c "cp -r /app/build/static/. /static/ 2>/dev/null || true"
             sudo docker compose -f docker-compose.production.yml exec -T frontend sh -c "cp /app/build/index.html /app/build/asset-manifest.json /app/build/manifest.json /app/build/robots.txt /app/build/favicon.ico /static/ 2>/dev/null || true"
             
-            # Перезагрузка nginx
             echo "🔄 Reloading nginx..."
             sudo docker compose -f docker-compose.production.yml exec -T gateway nginx -s reload 2>/dev/null || true
             
-            # Проверка статуса
             echo "✅ Deployment complete!"
             sudo docker compose -f docker-compose.production.yml ps
           EOF
@@ -258,40 +232,27 @@ jobs:
     if: always()
 
     steps:
-      - name: Send Telegram message on success
-        if: success()
+      - name: Send Telegram message
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          MESSAGE="✅ *Kittygram Deployment SUCCESS*
+          if [ "${{ needs.build_and_push.result }}" = "success" ] && [ "${{ needs.deploy.result }}" = "success" ]; then
+            STATUS="✅ SUCCESS"
+            EMOJI="✅"
+          else
+            STATUS="❌ FAILED"
+            EMOJI="❌"
+          fi
           
-          🏷️ Branch: ${{ github.ref_name }}
-          🔗 Commit: ${{ github.sha }}
-          📝 Message: ${{ github.event.head_commit.message }}
-          👤 Author: ${{ github.actor }}
+          MESSAGE="${EMOJI} Kittygram Deployment: ${STATUS}
           
-          🔗 View deployment: http://${{ secrets.HOST }}:9000
-          🔗 Actions: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          📦 Build: ${{ needs.build_and_push.result }}
+          🚀 Deploy: ${{ needs.deploy.result }}
+          🏥 Health: ${{ needs.health_check.result }}
           
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${MESSAGE}\",\"parse_mode\":\"Markdown\"}"
-
-      - name: Send Telegram message on failure
-        if: failure()
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          MESSAGE="❌ *Kittygram Deployment FAILED*
-          
-          🏷️ Branch: ${{ github.ref_name }}
-          🔗 Commit: ${{ github.sha }}
-          👤 Author: ${{ github.actor }}
-          
-          🔗 Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          🔗 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${MESSAGE}\",\"parse_mode\":\"Markdown\"}"
+            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${MESSAGE}\"}"
